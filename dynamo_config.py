@@ -3,8 +3,10 @@ DynamoDB wiring for the DIY Part 1 state backends (AgentCardRegistryTable and
 CheckpointTable). Table names and region can be overridden with environment
 variables to match whatever names the CDK stack actually provisioned:
 
-    AGENT_CARD_REGISTRY_TABLE   (default: AgentCardRegistryTable)
-    CHECKPOINT_TABLE            (default: CheckpointTable)
+    AGENT_CARD_REGISTRY_TABLE   (default: prior-auth-agent-cards-68741690,
+                                 the provisioned AgentCardRegistryTable)
+    CHECKPOINT_TABLE            (default: prior-auth-checkpoints-68741690,
+                                 the provisioned CheckpointTable)
     AWS_REGION / AWS_DEFAULT_REGION (default: the AWS config's region, else us-east-1)
     PA_STATE_BACKEND            "dynamodb" (default) or "memory" — "memory"
                                 keeps the original in-process dicts, for
@@ -21,13 +23,18 @@ from typing import Any
 
 DEFAULT_REGION = "us-east-1"
 
+# Physical names of the CDK-provisioned tables (logical IDs
+# AgentCardRegistryTable / CheckpointTable) in this lab account.
+DEFAULT_AGENT_CARD_REGISTRY_TABLE = "prior-auth-agent-cards-68741690"
+DEFAULT_CHECKPOINT_TABLE = "prior-auth-checkpoints-68741690"
+
 
 def agent_card_registry_table_name() -> str:
-    return os.environ.get("AGENT_CARD_REGISTRY_TABLE", "AgentCardRegistryTable")
+    return os.environ.get("AGENT_CARD_REGISTRY_TABLE", DEFAULT_AGENT_CARD_REGISTRY_TABLE)
 
 
 def checkpoint_table_name() -> str:
-    return os.environ.get("CHECKPOINT_TABLE", "CheckpointTable")
+    return os.environ.get("CHECKPOINT_TABLE", DEFAULT_CHECKPOINT_TABLE)
 
 
 def use_dynamodb() -> bool:
