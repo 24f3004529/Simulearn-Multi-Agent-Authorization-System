@@ -7,10 +7,12 @@ configuration, env vars, ...) is carried over unchanged; only the code
 artifact's S3 location changes. Polls until READY and prints failureReason
 on failure.
 
-    python3 scripts/deploy_runtime.py policy_matching   --bucket <AgentRuntimeCodeBucket name>
-    python3 scripts/deploy_runtime.py medical_necessity --bucket <AgentRuntimeCodeBucket name>
+    python3 scripts/deploy_runtime.py policy_matching
+    python3 scripts/deploy_runtime.py medical_necessity
 
-The bucket may also come from $AGENT_RUNTIME_CODE_BUCKET. Build the zip first
+The code bucket defaults to the provisioned AgentRuntimeCodeBucket
+(agent-runtime-code-68741690); override with --bucket or
+$AGENT_RUNTIME_CODE_BUCKET. Build the zip first
 with scripts/package_runtime.sh <capability>_runtime.
 """
 
@@ -29,13 +31,16 @@ sys.path.insert(0, str(ROOT))
 
 from runtime_config import AGENT_RUNTIME_ARNS  # noqa: E402
 
+# Physical name of the CDK-provisioned AgentRuntimeCodeBucket in this lab account.
+DEFAULT_CODE_BUCKET = "agent-runtime-code-68741690"
+
 TERMINAL_FAILURES = {"CREATE_FAILED", "UPDATE_FAILED", "DELETING", "DELETE_FAILED"}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("capability", choices=sorted(AGENT_RUNTIME_ARNS))
-    parser.add_argument("--bucket", default=os.environ.get("AGENT_RUNTIME_CODE_BUCKET"))
+    parser.add_argument("--bucket", default=os.environ.get("AGENT_RUNTIME_CODE_BUCKET", DEFAULT_CODE_BUCKET))
     parser.add_argument("--key", help="S3 key (default: <capability>_runtime.zip)")
     parser.add_argument("--zip", help="zip path (default: agents/<capability>_runtime.zip)")
     parser.add_argument("--timeout", type=int, default=600, help="seconds to wait for READY")
