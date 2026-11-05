@@ -31,5 +31,5 @@ class NecessityDetermination:
     result: NecessityResult
     evidence_citations: list[str]
     missing_evidence: list[str] = field(default_factory=list)
-    # TODO(DIY Part 2): add peer_clarification: dict | None = None here —
-    # must match pa_types.py's NecessityDetermination.
+    # DIY Part 2 — must match pa_types.py's NecessityDetermination.
+    peer_clarification: dict | None = None

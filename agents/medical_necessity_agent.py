@@ -13,6 +13,55 @@ from failure_injector import FailureInjector
 from pa_types import AgentCard, NecessityDetermination, NecessityResult
 from synthetic_data import ATTACHED_DOCUMENTS
 
+_PEER_AGENT_NAME = "policy-matching"
+_LOCAL_RESOLVED_VIA = "in-process:agents.policy_matching_agent"
+
+_NO_PEER_CLARIFICATION = {
+    "requested": False,
+    "peer_agent": None,
+    "resolved_via": None,
+    "missing_documents": None,
+}
+
+
+def _clarify_missing_documents(
+    required_docs_list: list[str], missing_documents: list[str], request_id: str
+) -> tuple[list[str], dict]:
+    """Local twin of medical_necessity_runtime/server.py's peer call: one
+    scoped clarification request to Policy Matching, generic-PEND fallback
+    on any failure."""
+    from agents.policy_matching_agent import handle_clarification_request
+
+    payload = {
+        "clarification_request": True,
+        "required_docs_list": list(required_docs_list),
+        "missing_documents": list(missing_documents),
+        "request_id": request_id,
+    }
+    try:
+        confirmed = handle_clarification_request(payload)["missing_documents"]
+        if not confirmed:
+            raise ValueError("peer confirmed no missing documents for a known gap")
+    except Exception as exc:  # noqa: BLE001 - any peer failure -> generic PEND
+        print(f"[peer_client] PeerUnavailableError: {exc}", flush=True)
+        return missing_documents, {
+            "requested": True,
+            "status": "failed",
+            "initiated_by": "agent:medical-necessity",
+            "peer_agent": _PEER_AGENT_NAME,
+            "resolved_via": _LOCAL_RESOLVED_VIA,
+            "missing_documents": None,
+            "error": str(exc),
+        }
+    return confirmed, {
+        "requested": True,
+        "status": "resolved",
+        "initiated_by": "agent:medical-necessity",
+        "peer_agent": _PEER_AGENT_NAME,
+        "resolved_via": _LOCAL_RESOLVED_VIA,
+        "missing_documents": confirmed,
+    }
+
 MEDICAL_NECESSITY_CARD = AgentCard(
     agent_name="medical-necessity",
     capabilities=["medical_necessity"],
@@ -70,6 +119,9 @@ def medical_necessity_agent(
     ]
 
     if missing_documents:
+        missing_evidence, peer_clarification = _clarify_missing_documents(
+            required_docs_list, missing_documents, request_id
+        )
         return NecessityDetermination(
             request_id=request_id,
             result=NecessityResult.INSUFFICIENT_EVIDENCE,
@@ -81,7 +133,8 @@ def medical_necessity_agent(
                 ),
                 f"Clinical summary: {notes_summary}",
             ],
-            missing_evidence=missing_documents,
+            missing_evidence=missing_evidence,
+            peer_clarification=peer_clarification,
         )
 
     result = _judge_necessity(notes_summary, coverage_criteria)
@@ -95,4 +148,5 @@ def medical_necessity_agent(
             f"Necessity judgment (Nova 2 Lite): {result.value}",
         ],
         missing_evidence=[],
+        peer_clarification=dict(_NO_PEER_CLARIFICATION),
     )

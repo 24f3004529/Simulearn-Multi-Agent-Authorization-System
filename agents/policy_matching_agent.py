@@ -40,3 +40,33 @@ def policy_matching_agent(
         coverage_criteria=matched["coverage_criteria"],
         required_docs_list=matched["required_docs_list"],
     )
+
+
+# DIY Part 2 — in-process twin of policy_matching_runtime/server.py's
+# handle_clarification_request, used by the local (non --real) pipeline.
+CLARIFICATION_ALLOWED_KEYS = {
+    "clarification_request",
+    "required_docs_list",
+    "missing_documents",
+    "request_id",
+}
+
+
+def handle_clarification_request(scoped_input: dict) -> dict:
+    """Returns only the items of required_docs_list that correspond to the
+    evidence gap — never the full list. Rejects any out-of-scope field."""
+    leaked = set(scoped_input) - CLARIFICATION_ALLOWED_KEYS
+    if leaked:
+        raise KeyError(
+            f"clarification_request carries fields outside its scope: {sorted(leaked)}"
+        )
+    gap = set(scoped_input["missing_documents"])
+    missing_documents: list[str] = []
+    for doc in scoped_input["required_docs_list"]:
+        if doc in gap and doc not in missing_documents:
+            missing_documents.append(doc)
+    return {
+        "request_id": scoped_input.get("request_id", ""),
+        "responded_by": POLICY_MATCHING_CARD.agent_name,
+        "missing_documents": missing_documents,
+    }

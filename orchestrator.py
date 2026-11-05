@@ -157,9 +157,24 @@ class AuditTrail:
 
     entries: list[dict] = field(default_factory=list)
 
-    def record(self, request_id: str, phase: str, payload: dict) -> None:
+    def record(
+        self,
+        request_id: str,
+        phase: str,
+        payload: dict,
+        *,
+        initiated_by: str = "orchestrator",
+    ) -> None:
+        # initiated_by distinguishes Orchestrator-mediated calls (the default,
+        # every core pipeline phase) from agent-initiated peer calls (DIY
+        # Part 2), so compliance review can tell the two call patterns apart.
         self.entries.append(
-            {"request_id": request_id, "phase": phase, "payload": payload}
+            {
+                "request_id": request_id,
+                "phase": phase,
+                "initiated_by": initiated_by,
+                "payload": payload,
+            }
         )
 
 
@@ -258,9 +273,24 @@ class Orchestrator:
         self.checkpoints.save(checkpoint)
         self.audit.record(request.request_id, "MED_NECESSITY", {"necessity": necessity})
 
-        # TODO(DIY Part 2): if necessity.peer_clarification indicates a peer
-        # call was requested, record it to self.audit here, attributed as
-        # agent-initiated, before the early return below.
+        # DIY Part 2: Medical Necessity's peer call to Policy Matching happened
+        # inside the agent, not through this Orchestrator — audit it as
+        # agent-initiated. Audit-only: no state machine change.
+        peer_clarification = getattr(necessity, "peer_clarification", None) or {}
+        if peer_clarification.get("requested"):
+            self.audit.record(
+                request.request_id,
+                "PEER_CLARIFICATION",
+                {
+                    "caller": "medical-necessity",
+                    "peer_agent": peer_clarification.get("peer_agent"),
+                    "resolved_via": peer_clarification.get("resolved_via"),
+                    "status": peer_clarification.get("status"),
+                    "missing_documents": peer_clarification.get("missing_documents"),
+                    "error": peer_clarification.get("error"),
+                },
+                initiated_by="agent:medical-necessity",
+            )
 
         if necessity.result == NecessityResult.INSUFFICIENT_EVIDENCE:
             checkpoint.state = PAState.PEND

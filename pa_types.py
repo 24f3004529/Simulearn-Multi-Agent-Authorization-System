@@ -92,12 +92,13 @@ class NecessityDetermination:
     result: NecessityResult
     evidence_citations: list[str]
     missing_evidence: list[str] = field(default_factory=list)
-    # TODO(DIY Part 2): add peer_clarification: dict | None = None here —
-    # must match agents/medical_necessity_runtime/agent_types.py's copy.
-    # Edit this existing class in place; don't add a second
-    # NecessityDetermination definition elsewhere in this file — Python
-    # silently uses whichever one is defined last, so a second copy would
-    # shadow this fix instead of applying it.
+    # DIY Part 2: result of Medical Necessity's peer clarification call to
+    # Policy Matching. Must match agents/medical_necessity_runtime/
+    # agent_types.py's copy (scripts/check_agent_types_sync.py checks this).
+    # Shape: {"requested": bool, "peer_agent": str | None,
+    #         "resolved_via": str | None, "missing_documents": list[str] | None,
+    #         ...}; None when the agent didn't report one.
+    peer_clarification: dict | None = None
 
 
 @dataclass
