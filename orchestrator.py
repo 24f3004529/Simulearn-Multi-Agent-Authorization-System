@@ -11,15 +11,20 @@ manual review.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from decimal import Decimal
+from enum import Enum
+from typing import Any
 
 from context import (FORBIDDEN_FOR_DECISION_SYNTHESIS,
                      FORBIDDEN_FOR_MEDICAL_NECESSITY,
                      FORBIDDEN_FOR_POLICY_MATCHING, assert_isolation,
                      scope_for_decision_synthesis, scope_for_medical_necessity,
                      scope_for_policy_matching)
+from dynamo_config import (StateBackendError, checkpoint_table_name,
+                           get_table, use_dynamodb)
 from failure_injector import FailureInjector
-from pa_types import (ClinicalSummary, FinalDetermination,
+from pa_types import (ClinicalSummary, Decision, FinalDetermination,
                       NecessityDetermination, NecessityResult, PARequest,
                       PAState, PolicyMatch)
 from recovery import (CircuitBreaker, DeadLetterQueue, ManualReviewQueue,
@@ -40,16 +45,109 @@ class Checkpoint:
 
 
 class CheckpointStore:
-    def __init__(self) -> None:
+    """DIY Part 1: one item per request in CheckpointTable (partition key
+    `request_id`), last write wins. Set PA_STATE_BACKEND=memory to keep the
+    original in-process dict instead."""
+
+    def __init__(
+        self, *, table: Any | None = None, use_table: bool | None = None
+    ) -> None:
         self._store: dict[str, Checkpoint] = {}
+        self._use_table = use_dynamodb() if use_table is None else use_table
+        self._table = table
 
     def save(self, checkpoint: Checkpoint) -> None:
-        # TODO(DIY Part 1): also write `checkpoint` to CheckpointTable here.
-        self._store[checkpoint.request_id] = checkpoint
+        if not self._use_table:
+            self._store[checkpoint.request_id] = checkpoint
+            return
+        try:
+            self._get_table().put_item(Item=checkpoint_to_item(checkpoint))
+        except Exception as exc:  # noqa: BLE001 - re-raised with context
+            raise StateBackendError(
+                f"PutItem to {checkpoint_table_name()} failed for request "
+                f"'{checkpoint.request_id}': {exc}"
+            ) from exc
 
     def load(self, request_id: str) -> Checkpoint | None:
-        # TODO(DIY Part 1): read from CheckpointTable instead of self._store.
-        return self._store.get(request_id)
+        if not self._use_table:
+            return self._store.get(request_id)
+        try:
+            response = self._get_table().get_item(
+                Key={"request_id": request_id}, ConsistentRead=True
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised with context
+            raise StateBackendError(
+                f"GetItem on {checkpoint_table_name()} failed for request "
+                f"'{request_id}': {exc}"
+            ) from exc
+        item = response.get("Item")
+        return checkpoint_from_item(item) if item else None
+
+    def _get_table(self) -> Any:
+        if self._table is None:
+            self._table = get_table(checkpoint_table_name())
+        return self._table
+
+
+# Checkpoint <-> DynamoDB item codec. Checkpoint nests dataclasses with enum
+# fields (PAState, NecessityResult, Decision), which DynamoDB cannot store
+# directly: enums are written as their `.value` and reconstructed on read.
+
+
+def _to_dynamo(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, float):
+        # boto3's DynamoDB serializer rejects float; Decimal is lossless here.
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {str(k): _to_dynamo(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_dynamo(v) for v in value]
+    if isinstance(value, set):
+        # Sets would become DynamoDB sets (which cannot be empty); store lists.
+        return [_to_dynamo(v) for v in sorted(value, key=str)]
+    return value
+
+
+def _from_dynamo(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, dict):
+        return {k: _from_dynamo(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_from_dynamo(v) for v in value]
+    return value
+
+
+def checkpoint_to_item(checkpoint: Checkpoint) -> dict[str, Any]:
+    return _to_dynamo(asdict(checkpoint))
+
+
+def _build(cls: type, raw: dict[str, Any] | None, **enum_fields: type) -> Any:
+    """Rebuilds dataclass `cls` from a stored map, coercing the named enum
+    fields and ignoring unknown keys so older/newer items still load."""
+    if raw is None:
+        return None
+    known = {f.name for f in fields(cls)}
+    kwargs = {k: v for k, v in _from_dynamo(raw).items() if k in known}
+    for name, enum_cls in enum_fields.items():
+        if kwargs.get(name) is not None:
+            kwargs[name] = enum_cls(kwargs[name])
+    return cls(**kwargs)
+
+
+def checkpoint_from_item(item: dict[str, Any]) -> Checkpoint:
+    return Checkpoint(
+        request_id=str(item["request_id"]),
+        state=PAState(item["state"]),
+        clinical_summary=_build(ClinicalSummary, item.get("clinical_summary")),
+        policy_match=_build(PolicyMatch, item.get("policy_match")),
+        necessity=_build(
+            NecessityDetermination, item.get("necessity"), result=NecessityResult
+        ),
+        final=_build(FinalDetermination, item.get("final"), decision=Decision),
+    )
 
 
 @dataclass

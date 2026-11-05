@@ -164,11 +164,37 @@ def _make_invoke_fn(runtime_arn: str, output_type: type) -> Callable[..., Any]:
     return invoke
 
 
+def make_runtime_invoke_fn_resolver(
+    agent_runtime_arns: dict[str, str],
+) -> Callable[[AgentCard], Callable[..., Any]]:
+    """Builds an invoke function for a card read back from
+    AgentCardRegistryTable in a fresh process (DIY Part 1). AgentCard has no
+    ARN field, so the ARN comes from runtime_config.AGENT_RUNTIME_ARNS, keyed
+    by the card's capability."""
+
+    def resolve(card: AgentCard) -> Callable[..., Any]:
+        for capability in card.capabilities:
+            runtime_arn = agent_runtime_arns.get(capability)
+            if runtime_arn and capability in _OUTPUT_TYPE_BY_CAPABILITY:
+                return _make_invoke_fn(
+                    runtime_arn, _OUTPUT_TYPE_BY_CAPABILITY[capability]
+                )
+        raise AgentNotFoundError(
+            f"Agent '{card.agent_name}' (capabilities {card.capabilities}) was found in "
+            f"AgentCardRegistryTable, but runtime_config.AGENT_RUNTIME_ARNS has no ARN "
+            f"for any of its capabilities, so it cannot be invoked."
+        )
+
+    return resolve
+
+
 def build_real_agent_registry(agent_runtime_arns: dict[str, str]) -> AgentCardRegistry:
     # Entries with an empty ARN are skipped, so agents can be deployed and
     # registered incrementally rather than all at once.
     client = boto3.client("bedrock-agentcore")
-    registry = AgentCardRegistry()
+    registry = AgentCardRegistry(
+        invoke_fn_resolver=make_runtime_invoke_fn_resolver(agent_runtime_arns)
+    )
 
     for capability_key, runtime_arn in agent_runtime_arns.items():
         if not runtime_arn:
