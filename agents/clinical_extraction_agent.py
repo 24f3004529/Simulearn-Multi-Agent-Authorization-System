@@ -17,6 +17,26 @@ CLINICAL_EXTRACTION_CARD = AgentCard(
 )
 
 
+def clinical_extraction_agent(request: PARequest, failures: FailureInjector) -> ClinicalSummary:
+    failures.maybe_fail("clinical-extraction")
+  
+    word_count = len(request.clinical_notes.split())
+    copay = request.billing_info.get("copay", "unknown")
+    notes_summary = (
+        f"{word_count}-word clinical note covering diagnosis code(s) "
+        f"{', '.join(request.diagnosis_codes)} and procedure code(s) "
+        f"{', '.join(request.procedure_codes)} (copay: {copay})."
+    )
+
+    return ClinicalSummary(
+        request_id=request.request_id,
+        icd10_codes=list(request.diagnosis_codes),
+        cpt_codes=list(request.procedure_codes),
+        notes_summary=notes_summary,
+      )
+
+'''
+
 def clinical_extraction_agent(
     request: PARequest, failures: FailureInjector
 ) -> ClinicalSummary:
@@ -29,3 +49,4 @@ def clinical_extraction_agent(
     # (request.diagnosis_codes), cpt_codes (request.procedure_codes), and
     # notes_summary populated.
     raise NotImplementedError
+'''
